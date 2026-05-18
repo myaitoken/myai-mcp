@@ -1,0 +1,28 @@
+# Smithery configuration for myai-mcp.
+# Docs: https://smithery.ai/docs/build
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      myaiApiKey:
+        type: string
+        title: MyAi API Key
+        description: >
+          Required for inference (myai_chat, myai_hire_agent) and wallet tools.
+          list_models / list_agents / network_stats work without a key.
+          Get one at https://myaitoken.io/for-agents.
+      baseUrl:
+        type: string
+        title: MyAi coordinator URL (advanced)
+        default: https://api.myaitoken.io
+  commandFunction: |
+    (config) => ({
+      command: "uvx",
+      args: ["myai-mcp"],
+      env: {
+        MYAI_API_KEY: config.myaiApiKey || "",
+        MYAI_BASE_URL: config.baseUrl || "https://api.myaitoken.io"
+      }
+    })
