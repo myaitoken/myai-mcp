@@ -1,5 +1,7 @@
 # myai-mcp
 
+<!-- mcp-name: io.github.myaitoken/myai-mcp -->
+
 MCP server for the [MyAi](https://myaitoken.io) decentralized AI inference network.
 
 Gives any MCP-compatible agent (Claude Desktop, Cursor, etc.) access to:
