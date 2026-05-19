@@ -5,15 +5,24 @@ Exposes the MyAi decentralized inference network as MCP tools so any
 MCP-compatible agent (Claude, Cursor, etc.) can run inference, browse
 available models and providers, and query network/wallet state.
 
+Zero-config — if MYAI_API_KEY isn't set, a free-tier key is auto-issued on
+first call and cached at ~/.myai/key. 100 free completions, no signup.
+
 Environment variables:
-  MYAI_API_KEY   — your MyAi API key (required for inference + wallet tools)
+  MYAI_API_KEY   — your MyAi API key. Optional; auto-issued if unset.
   MYAI_BASE_URL  — coordinator base URL (default: https://api.myaitoken.io)
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import platform
+import socket
+import sys
+import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -27,30 +36,101 @@ from mcp.types import (
 BASE_URL = os.environ.get("MYAI_BASE_URL", "https://api.myaitoken.io").rstrip("/")
 API_KEY  = os.environ.get("MYAI_API_KEY", "")
 
+# Cache the auto-issued key here so we only mint once per machine.
+_KEY_CACHE_PATH = Path(os.environ.get("MYAI_KEY_CACHE", "")) if os.environ.get("MYAI_KEY_CACHE") \
+                  else Path.home() / ".myai" / "key"
+
 app = Server("myai")
+
+
+# ── Zero-friction free-key bootstrap ─────────────────────────────────────────
+
+def _machine_fingerprint() -> str:
+    """Stable per-machine ID. Same machine = same fingerprint = same key.
+
+    Built from: MAC address (uuid.getnode), hostname, platform, py version.
+    Hashed so the raw values never leave the box.
+    """
+    parts = [
+        hex(uuid.getnode()),
+        socket.gethostname(),
+        platform.system(),
+        platform.machine(),
+        sys.version.split()[0],
+    ]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+def _load_cached_key() -> str:
+    try:
+        if _KEY_CACHE_PATH.exists():
+            v = _KEY_CACHE_PATH.read_text().strip()
+            if v.startswith("myai"):
+                return v
+    except Exception:
+        pass
+    return ""
+
+
+def _save_cached_key(key: str) -> None:
+    try:
+        _KEY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _KEY_CACHE_PATH.write_text(key)
+        try:
+            _KEY_CACHE_PATH.chmod(0o600)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+async def _bootstrap_key() -> str:
+    """Issue (or recall) a free-tier key. Idempotent — called at most once
+    per server lifetime; result is cached in API_KEY module global + on disk."""
+    global API_KEY
+    if API_KEY:
+        return API_KEY
+    cached = _load_cached_key()
+    if cached:
+        API_KEY = cached
+        return API_KEY
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            f"{BASE_URL}/v1/keys/auto-issue",
+            json={
+                "machine_id": _machine_fingerprint(),
+                "client": "myai-mcp/0.2.0",
+            },
+        )
+        r.raise_for_status()
+        key = r.json()["api_key"]
+    API_KEY = key
+    _save_cached_key(key)
+    return key
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _headers(require_auth: bool = True) -> dict:
+async def _headers(require_auth: bool = True) -> dict:
     h = {"Content-Type": "application/json"}
+    if require_auth and not API_KEY:
+        # First call without a key — auto-issue a free-tier one.
+        await _bootstrap_key()
     if API_KEY:
         h["Authorization"] = f"Bearer {API_KEY}"
-    elif require_auth:
-        raise ValueError("MYAI_API_KEY is not set. Export it before starting the server.")
     return h
 
 
 async def _get(path: str, auth: bool = True) -> Any:
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(f"{BASE_URL}{path}", headers=_headers(auth))
+        r = await client.get(f"{BASE_URL}{path}", headers=await _headers(auth))
         r.raise_for_status()
         return r.json()
 
 
 async def _post(path: str, body: dict, auth: bool = True) -> Any:
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(f"{BASE_URL}{path}", headers=_headers(auth), json=body)
+        r = await client.post(f"{BASE_URL}{path}", headers=await _headers(auth), json=body)
         r.raise_for_status()
         return r.json()
 

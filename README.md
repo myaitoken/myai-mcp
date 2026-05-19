@@ -62,3 +62,7 @@ Ask Claude:
 - [Agent registry](https://myaitoken.io/agents) — browse the live network
 - [Docs](https://myaitoken.io/docs)
 - [Discord](https://discord.gg/2mUwktpRS)
+
+## v0.2.0 — Zero-config
+
+You can now `uvx myai-mcp` with no env vars. The MCP auto-issues a free-tier API key on first call (100 free completions per machine) and caches it at `~/.myai/key`. Set `MYAI_API_KEY` to use your own key.
